@@ -370,10 +370,10 @@ const isLiteMode = process.env.RENDER || process.env.LITE_MODE;
 for (const city of Object.keys(CITIES)) {
   if (!CITIES[city].gtfs || !CITIES[city].gtfs.staticUrl) continue;
   
-  // Free tier cloud hosts (e.g., Render) have 512MB RAM limits. Warsaw's GTFS 
-  // is ~600MB unzipped and over 300,000 trips, which causes an immediate OOM crash.
-  if (isLiteMode && city === 'warszawa') {
-    console.log(`[GTFS:${city}] Skipping static data load to conserve memory (LITE_MODE active). Real-time positions will still work.`);
+  // Free tier cloud hosts (e.g., Render) have 512MB RAM limits. We restrict GTFS 
+  // loading to just Poznań on free tiers to prevent Out of Memory crashes.
+  if (isLiteMode && city !== 'poznan') {
+    console.log(`[GTFS:${city}] Skipping static data load to conserve memory (LITE_MODE active).`);
     cityData[city] = { routes: [], routesMap: {}, stops: [], stopsMap: {}, tripsMap: {}, tripStopTimes: {}, routeFrequency: {}, routeGeoJSON: { type: 'FeatureCollection', features: [] } };
     continue;
   }
