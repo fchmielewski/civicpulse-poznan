@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CivicPulse — Polska</title>
+  <meta name="description" content="CivicPulse — real-time open-data visualization for Polish cities. Explore Poznań, Łódź, and Warsaw through an interactive 3D map of public-transit, infrastructure, and environmental feeds." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <!-- Warm DNS+TCP+TLS to the vector-tile origin and the local API server
+       in parallel with the JS bundle download. Saves the first round-trip
+       on each fetch when the map style and layer data start arriving. -->
+  <link rel="preconnect" href="https://tiles.openfreemap.org" crossorigin />
+  <link rel="dns-prefetch" href="http://localhost:3001" />
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://unpkg.com/maplibre-gl@5.1.0/dist/maplibre-gl.css" rel="stylesheet" />
+</head>
+<body>
+  <!-- City selection screen -->
+  <div id="city-select-screen">
+    <div class="city-select-scan"></div>
+    <div class="city-select-inner">
+      <div class="city-select-left">
+        <div class="city-select-globe">
+          <div class="globe-orbit globe-orbit-1"></div>
+          <div class="globe-orbit globe-orbit-2"></div>
+          <div class="globe-orbit globe-orbit-3"></div>
+          <div class="globe-sphere">
+            <div class="globe-grid"></div>
+            <div class="globe-dots"></div>
+          </div>
+          <!-- City nodes positioned around the globe -->
+          <div class="city-node city-available" style="top: 28%; left: 38%;" data-city="poznan">
+            <span class="node-pulse"></span>
+            <span class="node-dot"></span>
+            <span class="node-label">POZNAŃ</span>
+          </div>
+          <div class="city-node city-available" style="top: 46%; left: 48%;" data-city="lodz">
+            <span class="node-pulse"></span>
+            <span class="node-dot"></span>
+            <span class="node-label">ŁÓDŹ</span>
+          </div>
+          <div class="city-node city-available" style="top: 40%; left: 60%;" data-city="warszawa">
+            <span class="node-pulse"></span>
+            <span class="node-dot"></span>
+            <span class="node-label">WARSZAWA</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="city-select-right">
+        <div class="city-brand">
+          <div class="city-brand-prefix">OPEN_DATA</div>
+          <div class="city-brand-name">Civic<span>Pulse</span></div>
+        </div>
+        <div class="city-select-tagline">
+          REAL-TIME OPEN DATA FROM POLISH CITIES.<br>
+          TRANSIT, INFRASTRUCTURE, ENVIRONMENT — ON ONE LIVE MAP.
+        </div>
+
+        <button id="city-select-btn" class="city-select-btn" disabled>
+          <span class="btn-arrow">›</span> SELECT A CITY
+        </button>
+
+        <div class="city-list">
+          <div class="city-list-header">AVAILABLE NODES /</div>
+          <div class="city-option city-option-available" data-city="poznan">
+            <span class="city-option-status">●</span>
+            <span class="city-option-name">POZNAŃ</span>
+            <span class="city-option-meta">PL — ONLINE</span>
+          </div>
+          <div class="city-option city-option-available" data-city="lodz">
+            <span class="city-option-status">●</span>
+            <span class="city-option-name">ŁÓDŹ</span>
+            <span class="city-option-meta">PL — ONLINE</span>
+          </div>
+          <div class="city-option city-option-available" data-city="warszawa">
+            <span class="city-option-status">●</span>
+            <span class="city-option-name">WARSZAWA</span>
+            <span class="city-option-meta">PL — ONLINE</span>
+          </div>
+        </div>
+
+        <div class="city-select-footer">
+          <span>LIVE NETWORK</span>
+          <span class="dim">v0.0.1 — PRE-ALPHA</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Loading screen -->
+  <div id="loading-screen" class="pending">
+    <div class="loading-content">
+      <div class="loading-title">Civic<span>Pulse</span></div>
+      <div class="loading-city loading-city-name">POZNAŃ</div>
+      <div class="loading-bar-container">
+        <div class="loading-bar"></div>
+      </div>
+      <div class="loading-status">INITIALIZING CITY GRID...</div>
+    </div>
+  </div>
+
+  <!-- Scanline overlay -->
+  <div id="scanline-overlay"></div>
+
+  <!-- Map container -->
+  <div id="map"></div>
+
+  <!-- Mobile menu toggle -->
+  <button id="mobile-menu-btn" aria-label="Toggle menu">
+    <span></span><span></span><span></span>
+  </button>
+
+  <!-- Sidebar backdrop (mobile) -->
+  <div id="sidebar-backdrop"></div>
+
+  <!-- Left sidebar -->
+  <div id="sidebar">
+    <button id="sidebar-switch-city" type="button">‹ SWITCH NODE</button>
+    <h1 class="sidebar-title"><span class="sidebar-city-name">Poznań</span> Data<span class="dot">.</span></h1>
+    <div class="sidebar-section">
+      <div class="section-label">TRANSPORTATION /</div>
+      <div class="section-items">
+        <div class="item disabled" data-layer="tram"><span class="item-icon" style="color:#00cfff">●</span> TRAM</div>
+        <div class="item disabled" data-layer="metro"><span class="item-icon" style="color:#ffaa00">▤</span> METRO</div>
+        <div class="item disabled" data-layer="bus"><span class="item-icon" style="color:#00cfff">●</span> BUS</div>
+        <div class="item disabled" data-layer="carTraffic"><span class="item-icon" style="color:#ff5544">▤</span> CAR TRAFFIC</div>
+        <div class="item disabled" data-layer="bicycleCounters"><span class="item-icon" style="color:#4dff4d">●</span> BICYCLE COUNTERS</div>
+        <div class="item disabled" data-layer="bikeSharing"><span class="item-icon" style="color:#00cc88">◎</span> BIKE SHARING</div>
+        <div class="item disabled" data-layer="parking"><span class="item-icon" style="color:#00aaff">P</span> PARKING</div>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="section-label">GRID NETWORK /</div>
+      <div class="section-items">
+        <div class="item disabled" data-layer="emf"><span class="item-icon" style="color:#ff3366">■</span> ELECTROMAGNETIC FIELDS</div>
+        <div class="item disabled" data-layer="mobile"><span class="item-icon" style="color:#ff6633">●</span> MOBILE</div>
+        <div class="item disabled" data-layer="connectionPoints"><span class="item-icon" style="color:#00e5d0">◈</span> CONNECTION POINTS</div>
+        <div class="item disabled" data-layer="tor"><span class="item-icon" style="color:#b44dff">⬡</span> TOR RELAYS</div>
+        <div class="item disabled" data-layer="wifi"><span class="item-icon" style="color:#44ddaa">⦿</span> WI-FI HOTSPOTS</div>
+        <div class="item disabled" data-layer="electricity"><span class="item-icon" style="color:#ffe935">⚡</span> ELECTRICITY</div>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="section-label">URBAN INFRASTRUCTURE /</div>
+      <div class="section-items">
+        <div class="item disabled" data-layer="atms"><span class="item-icon" style="color:#33ff99">◆</span> ATM</div>
+        <div class="item disabled" data-layer="trafficLights"><span class="item-icon" style="color:#ffcc00">◉</span> TRAFFIC LIGHTS</div>
+        <div class="item disabled" data-layer="cctv"><span class="item-icon" style="color:#ff3333">✕</span> CCTV</div>
+        <div class="item disabled" data-layer="environment"><span class="item-icon" style="color:#7ee03a">❀</span> ENVIRONMENT</div>
+        <div class="item disabled" data-layer="parcels"><span class="item-icon" style="color:#ff8c1a">▥</span> PARCEL LOCKERS</div>
+        <div class="item disabled" data-layer="emergency"><span class="item-icon" style="color:#ff0044">✚</span> EMERGENCY DISPATCH</div>
+        <div class="item disabled" data-layer="billboards"><span class="item-icon" style="color:#ff44dd">▣</span> ADVERTISING BILLBOARDS</div>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="section-label">HYDROLOGY /</div>
+      <div class="section-items">
+        <div class="item disabled" data-layer="hydro"><span class="item-icon" style="color:#00bbff">≋</span> <span class="hydro-label">WARTA</span> RIVER LEVEL</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Custom nav controls -->
+  <div id="nav-controls">
+    <button id="nav-zoom-in" class="nav-btn" title="Zoom in">+</button>
+    <button id="nav-zoom-out" class="nav-btn" title="Zoom out">−</button>
+    <div class="nav-separator"></div>
+    <button id="nav-compass" class="nav-btn nav-compass" title="Reset bearing">⬡</button>
+    <button id="nav-pitch" class="nav-btn" title="Reset pitch">⏏</button>
+    <div class="nav-separator"></div>
+    <button id="nav-locate" class="nav-btn" title="Show my location">⊕</button>
+  </div>
+
+  <!-- Toast (one global, reused for any short transient message) -->
+  <div id="toast"></div>
+
+  <!-- Search bar -->
+  <div id="search-bar">
+    <span class="search-slash">/</span>
+    <input type="text" id="search-input" placeholder="Find a data /" autocomplete="off" />
+    <span class="search-icon">⌕</span>
+    <div id="search-results"></div>
+  </div>
+
+  <!-- Bottom bar -->
+  <div id="bottom-bar">
+    <div class="bottom-left">
+      <div class="brand-logo">
+        <span class="brand-prefix">OPEN_DATA</span>
+        <span class="brand-name">Civic<span class="brand-highlight">Pulse</span></span>
+      </div>
+    </div>
+    <div class="bottom-center">
+      <span class="bottom-link bottom-city-name">POZNAŃ</span>
+    </div>
+    <div class="bottom-right"></div>
+  </div>
+
+  <!-- Coordinates display -->
+  <div id="coords-display">
+    <span id="coords-lat">52.4064</span>, <span id="coords-lng">16.9252</span>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
