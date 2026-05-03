@@ -8,3 +8,5 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: VITE_TOMTOM_API_KEY
+        value: iQS1YElqYlJ08jdGeMARItWgrsyltfHs
