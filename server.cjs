@@ -390,27 +390,23 @@ function loadCityGTFS(city) {
   // and the next-stop arrival time). 
   const tripStopTimes = {};
   
-  // To save memory on free tier hosts (512MB RAM limit), we skip parsing the
-  // massive stop_times.txt file for secondary cities. Poznań fits, but Łódź
-  // adds too much memory overhead when parsed as objects.
-  const skipStopTimes = (process.env.RENDER || process.env.LITE_MODE) && city !== 'poznan';
-  
-  if (!skipStopTimes) {
-    const stopTimesPath = path.join(dir, 'stop_times.txt');
-    if (fs.existsSync(stopTimesPath)) {
-      streamCSV(stopTimesPath, (f, c) => {
-        const tripId = (f[c.trip_id] || '').replace(/"/g, '');
-        if (!tripStopTimes[tripId]) tripStopTimes[tripId] = [];
-        tripStopTimes[tripId].push({
-          stopId: f[c.stop_id],
-          arrival: f[c.arrival_time],
-          sequence: parseInt(f[c.stop_sequence])
-        });
-      });
-      Object.values(tripStopTimes).forEach(arr => arr.sort((a, b) => a.sequence - b.sequence));
-    }
-  } else {
-    console.log(`[GTFS:${city}] Skipping stop_times.txt to conserve memory (LITE_MODE).`);
+  // We encode stop_times into highly compact strings to save hundreds of MBs
+  // of RAM vs creating millions of JS objects. This allows full stop data
+  // for secondary cities to fit comfortably within free tier limits.
+  const stopTimesPath = path.join(dir, 'stop_times.txt');
+  if (fs.existsSync(stopTimesPath)) {
+    streamCSV(stopTimesPath, (f, c) => {
+      const tripId = (f[c.trip_id] || '').replace(/"/g, '');
+      if (!tripStopTimes[tripId]) tripStopTimes[tripId] = [];
+      tripStopTimes[tripId].push(`${f[c.stop_sequence]}|${f[c.stop_id]}|${f[c.arrival_time]}`);
+    });
+    
+    // Sort each trip's stops by sequence and join into a single memory-efficient string
+    Object.keys(tripStopTimes).forEach(tripId => {
+      const arr = tripStopTimes[tripId];
+      arr.sort((a, b) => parseInt(a) - parseInt(b));
+      tripStopTimes[tripId] = arr.join(',');
+    });
   }
 
   const routeTripCounts = {};
@@ -505,16 +501,26 @@ app.get('/api/vehicles', async (req, res) => {
 
       let fromStop = null, toStop = null, nextStopArrival = null, nextStopName = null;
       if (tripId && d.tripStopTimes[tripId]) {
-        const stSeq = d.tripStopTimes[tripId];
-        if (stSeq.length > 0) {
-          fromStop = d.stopsMap[stSeq[0].stopId]?.name || stSeq[0].stopId;
-          toStop = d.stopsMap[stSeq[stSeq.length - 1].stopId]?.name || stSeq[stSeq.length - 1].stopId;
-          const currentStopSeq = vp.currentStopSequence;
-          if (currentStopSeq !== undefined && currentStopSeq !== null) {
-            const nextSt = stSeq.find(s => s.sequence >= currentStopSeq);
-            if (nextSt) {
-              nextStopName = d.stopsMap[nextSt.stopId]?.name;
-              nextStopArrival = nextSt.arrival;
+        const stSeqStr = d.tripStopTimes[tripId];
+        if (stSeqStr) {
+          const parts = stSeqStr.split(',');
+          if (parts.length > 0) {
+            const firstParts = parts[0].split('|');
+            const lastParts = parts[parts.length - 1].split('|');
+            
+            fromStop = d.stopsMap[firstParts[1]]?.name || firstParts[1];
+            toStop = d.stopsMap[lastParts[1]]?.name || lastParts[1];
+            
+            const currentStopSeq = vp.currentStopSequence;
+            if (currentStopSeq !== undefined && currentStopSeq !== null) {
+              for (const part of parts) {
+                const sp = part.split('|');
+                if (parseInt(sp[0]) >= currentStopSeq) {
+                  nextStopName = d.stopsMap[sp[1]]?.name;
+                  nextStopArrival = sp[2];
+                  break;
+                }
+              }
             }
           }
         }
