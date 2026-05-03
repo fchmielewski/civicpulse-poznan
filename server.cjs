@@ -387,23 +387,30 @@ function loadCityGTFS(city) {
   console.log(`[GTFS:${city}] ${routeGeoJSON.features.length} route shapes`);
 
   // Per-trip stop sequences (used by the vehicle popup to show first/last stop
-  // and the next-stop arrival time). Warsaw's stop_times.txt has 7.75M rows so
-  // we (a) stream-parse it to avoid the giant intermediate array and (b) keep
-  // only the fields we actually read — dropping `departure_time` halves the
-  // per-row footprint.
+  // and the next-stop arrival time). 
   const tripStopTimes = {};
-  const stopTimesPath = path.join(dir, 'stop_times.txt');
-  if (fs.existsSync(stopTimesPath)) {
-    streamCSV(stopTimesPath, (f, c) => {
-      const tripId = (f[c.trip_id] || '').replace(/"/g, '');
-      if (!tripStopTimes[tripId]) tripStopTimes[tripId] = [];
-      tripStopTimes[tripId].push({
-        stopId: f[c.stop_id],
-        arrival: f[c.arrival_time],
-        sequence: parseInt(f[c.stop_sequence])
+  
+  // To save memory on free tier hosts (512MB RAM limit), we skip parsing the
+  // massive stop_times.txt file for secondary cities. Poznań fits, but Łódź
+  // adds too much memory overhead when parsed as objects.
+  const skipStopTimes = (process.env.RENDER || process.env.LITE_MODE) && city !== 'poznan';
+  
+  if (!skipStopTimes) {
+    const stopTimesPath = path.join(dir, 'stop_times.txt');
+    if (fs.existsSync(stopTimesPath)) {
+      streamCSV(stopTimesPath, (f, c) => {
+        const tripId = (f[c.trip_id] || '').replace(/"/g, '');
+        if (!tripStopTimes[tripId]) tripStopTimes[tripId] = [];
+        tripStopTimes[tripId].push({
+          stopId: f[c.stop_id],
+          arrival: f[c.arrival_time],
+          sequence: parseInt(f[c.stop_sequence])
+        });
       });
-    });
-    Object.values(tripStopTimes).forEach(arr => arr.sort((a, b) => a.sequence - b.sequence));
+      Object.values(tripStopTimes).forEach(arr => arr.sort((a, b) => a.sequence - b.sequence));
+    }
+  } else {
+    console.log(`[GTFS:${city}] Skipping stop_times.txt to conserve memory (LITE_MODE).`);
   }
 
   const routeTripCounts = {};
@@ -423,10 +430,10 @@ const isLiteMode = process.env.RENDER || process.env.LITE_MODE;
 for (const city of Object.keys(CITIES)) {
   if (!CITIES[city].gtfs || !CITIES[city].gtfs.staticUrl) continue;
   
-  // Free tier cloud hosts (e.g., Render) have 512MB RAM limits. We restrict GTFS 
-  // loading to just Poznań on free tiers to prevent Out of Memory crashes.
-  if (isLiteMode && city !== 'poznan') {
-    console.log(`[GTFS:${city}] Skipping static data load to conserve memory (LITE_MODE active).`);
+  // Free tier cloud hosts (e.g., Render) have 512MB RAM limits. Warsaw's GTFS 
+  // is ~600MB unzipped and over 300,000 trips, which causes an immediate OOM crash.
+  if (isLiteMode && city === 'warszawa') {
+    console.log(`[GTFS:${city}] Skipping static data load completely to conserve memory (LITE_MODE active). Real-time positions will still work.`);
     cityData[city] = { routes: [], routesMap: {}, stops: [], stopsMap: {}, tripsMap: {}, tripStopTimes: {}, routeFrequency: {}, routeGeoJSON: { type: 'FeatureCollection', features: [] } };
     continue;
   }
