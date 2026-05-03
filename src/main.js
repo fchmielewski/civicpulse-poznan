@@ -454,18 +454,6 @@ function initMap() {
     bearing: cfg.bearing
   };
 
-  // Cap the rendered DPR — but never below the display's actual physical
-  // ratio when that ratio is Retina-class (2×) or below. Rendering Retina
-  // at 1.5× and letting the browser upscale produces visible blur on
-  // exactly the screens users notice it on.
-  //
-  // The cap kicks in at 3× (iPhone Pro / some 4K laptops) where the
-  // marginal sharpness from each extra logical pixel is imperceptible on
-  // a map but the fragment-shader cost is 2.25× a 2× display. So:
-  //   DPR ≤ 2 → use the native DPR (Retina is exact, low-DPI is exact)
-  //   DPR > 2 → cap at 2 (still pixel-perfect at Retina density)
-  const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-
   map = new maplibregl.Map({
     container: 'map',
     style: mapStyle,
@@ -476,7 +464,10 @@ function initMap() {
     // antialias: false saves GPU budget — at our zoom levels and the
     // dark cyberpunk palette, MSAA is unnoticeable. Was true.
     antialias: false,
-    pixelRatio,
+    // No explicit pixelRatio — MapLibre defaults to window.devicePixelRatio,
+    // so every display (1x, 1.5x, 2x Retina, 3x iPhone Pro) renders at its
+    // native density. We previously capped this for perf; we trade that
+    // back here for sharpness.
     // Lowered from 72° → 60°. The last 12° of pitch put the camera
     // nearly horizontal, which forces MapLibre to load the whole horizon
     // out to the maxBounds. 60° still gives a strong 3D feel.
