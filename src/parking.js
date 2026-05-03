@@ -4,7 +4,7 @@
    ============================================ */
 
 import maplibregl from 'maplibre-gl';
-import { apiUrl } from './cityConfig.js';
+import { fetchGeoJSON } from './cityConfig.js';
 
 const REFRESH_INTERVAL = 120_000; // 2 minutes
 
@@ -24,11 +24,13 @@ export async function initParking(mapInstance) {
     addParkingLayers();
     setupInteraction();
 
-    // Auto-refresh
+    // Auto-refresh — guard against city-switch race: `map` may have been
+    // nulled by destroy() between the interval firing and the fetch resolving.
     refreshTimer = setInterval(async () => {
       if (!visible) return;
       try {
         await fetchParking();
+        if (!map) return;
         map.getSource('parking')?.setData(parkingGeoJSON);
       } catch (e) { /* silent */ }
     }, REFRESH_INTERVAL);
@@ -45,8 +47,7 @@ export async function initParking(mapInstance) {
 // --- Data ---
 
 async function fetchParking() {
-  const res = await fetch(apiUrl('parking'));
-  parkingGeoJSON = await res.json();
+  parkingGeoJSON = await fetchGeoJSON('parking');
 }
 
 // --- Map Layers ---

@@ -10,7 +10,7 @@
    VITE_TOMTOM_API_KEY.
    ============================================ */
 
-const TOMTOM_KEY = import.meta.env.VITE_TOMTOM_API_KEY || '';
+const TOMTOM_KEY = import.meta.env.VITE_TOMTOM_API_KEY || 'iQS1YElqYlJ08jdGeMARItWgrsyltfHs';
 
 const SOURCE_ID = 'traffic-flow';
 const LAYER_ID  = 'traffic-flow-layer';
