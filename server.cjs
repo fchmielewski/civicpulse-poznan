@@ -8,6 +8,7 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const { parse } = require('csv-parse/sync');
+const { StringDecoder } = require('string_decoder');
 const GtfsRealtimeBindings = require('gtfs-realtime-bindings');
 const { execSync } = require('child_process');
 
@@ -207,28 +208,80 @@ function readCSV(filepath) {
   return parse(content, { columns: true, skip_empty_lines: true, relax_column_count: true });
 }
 
-// Streaming variant for stop_times.txt — Warsaw's file is 526 MB / 7.75M rows,
-// so an in-memory `parse()` would peak at multiple gigabytes building the
-// intermediate object array. We walk the buffer line-by-line instead so only
-// the source string and the caller's accumulated structure stay resident.
+// Streaming variant for stop_times.txt — Warsaw's file is now over 512 MiB,
+// past V8's `Cannot create a string longer than 0x1fffffe8` limit, so we
+// can no longer slurp it. Read in 64 MiB chunks via fs.readSync, decode
+// with StringDecoder (which buffers any UTF-8 sequence split across a
+// chunk boundary), and process complete lines as they arrive. Memory
+// peaks at the buffer + the caller's accumulated structure regardless of
+// file size.
 //
 // GTFS spec stop_times.txt has no quoted fields (values are integers or trip-id
 // strings without commas), so a plain split(',') is safe per spec.
 function streamCSV(filepath, perRow) {
-  const buf = fs.readFileSync(filepath, 'utf-8').replace(/^﻿/, '');
-  const headerEnd = buf.indexOf('\n');
-  if (headerEnd < 0) return;
-  const header = buf.slice(0, headerEnd).replace(/\r$/, '').split(',');
-  const cols = {};
-  header.forEach((c, i) => { cols[c.trim()] = i; });
-  let start = headerEnd + 1;
-  const len = buf.length;
-  while (start < len) {
-    let end = buf.indexOf('\n', start);
-    if (end < 0) end = len;
-    const stop = (end > start && buf.charCodeAt(end - 1) === 13) ? end - 1 : end;
-    if (stop > start) perRow(buf.slice(start, stop).split(','), cols);
-    start = end + 1;
+  const CHUNK_BYTES = 64 * 1024 * 1024;
+  const fd = fs.openSync(filepath, 'r');
+  const buf = Buffer.allocUnsafe(CHUNK_BYTES);
+  const decoder = new StringDecoder('utf-8');
+  let leftover = '';
+  let cols = null;
+
+  // Strip a leading UTF-8 BOM the first time we see one. GTFS feeds from
+  // Polish operators sometimes ship with a BOM (Excel-saved CSVs); the
+  // old code handled this on the whole-file string, we handle it once
+  // here on the first decoded chunk.
+  let firstChunk = true;
+
+  try {
+    while (true) {
+      const bytesRead = fs.readSync(fd, buf, 0, CHUNK_BYTES, null);
+      if (bytesRead === 0) break;
+
+      let chunkText = decoder.write(buf.subarray(0, bytesRead));
+      if (firstChunk) {
+        chunkText = chunkText.replace(/^﻿/, '');
+        firstChunk = false;
+      }
+      let text = leftover + chunkText;
+
+      // Keep any trailing partial line for the next chunk.
+      const lastNewline = text.lastIndexOf('\n');
+      if (lastNewline < 0) {
+        leftover = text;
+        continue;
+      }
+      const completeBlock = text.slice(0, lastNewline);
+      leftover = text.slice(lastNewline + 1);
+
+      const lines = completeBlock.split('\n');
+      let lineIdx = 0;
+      if (cols === null) {
+        // First non-empty line is the header.
+        while (lineIdx < lines.length && lines[lineIdx].length === 0) lineIdx++;
+        if (lineIdx >= lines.length) continue;
+        const headerLine = lines[lineIdx].replace(/\r$/, '');
+        cols = {};
+        headerLine.split(',').forEach((c, i) => { cols[c.trim()] = i; });
+        lineIdx++;
+      }
+      for (; lineIdx < lines.length; lineIdx++) {
+        const line = lines[lineIdx];
+        const stop = line.length > 0 && line.charCodeAt(line.length - 1) === 13
+          ? line.length - 1 : line.length;
+        if (stop > 0) perRow(line.slice(0, stop).split(','), cols);
+      }
+    }
+
+    // Flush any bytes the decoder is still holding + the final partial line
+    // (a file may not end with a trailing newline).
+    leftover += decoder.end();
+    if (cols && leftover.length > 0) {
+      const stop = leftover.charCodeAt(leftover.length - 1) === 13
+        ? leftover.length - 1 : leftover.length;
+      if (stop > 0) perRow(leftover.slice(0, stop).split(','), cols);
+    }
+  } finally {
+    fs.closeSync(fd);
   }
 }
 

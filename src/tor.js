@@ -6,7 +6,7 @@
    ============================================ */
 
 import maplibregl from 'maplibre-gl';
-import { apiUrl } from './cityConfig.js';
+import { fetchGeoJSON } from './cityConfig.js';
 
 let map = null;
 let torGeoJSON = null;
@@ -37,8 +37,7 @@ export async function initTor(mapInstance) {
 // --- Data ---
 
 async function fetchTor() {
-  const res = await fetch(apiUrl('tor'));
-  torGeoJSON = await res.json();
+  torGeoJSON = await fetchGeoJSON('tor');
 }
 
 // --- Map Layers ---

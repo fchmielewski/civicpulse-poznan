@@ -5,7 +5,7 @@
    ============================================ */
 
 import maplibregl from 'maplibre-gl';
-import { apiUrl } from './cityConfig.js';
+import { fetchGeoJSON } from './cityConfig.js';
 import { showNetworkLinks } from './network.js';
 
 const REFRESH_INTERVAL = 90_000; // 90s — matches server cache TTL
@@ -30,6 +30,7 @@ export async function initBikeSharing(mapInstance) {
       if (!visible) return;
       try {
         await fetchBikes();
+        if (!map) return; // city-switch race
         map.getSource('bike-sharing')?.setData(bikeGeoJSON);
       } catch { /* silent */ }
     }, REFRESH_INTERVAL);
@@ -48,8 +49,7 @@ export async function initBikeSharing(mapInstance) {
 // --- Data ---
 
 async function fetchBikes() {
-  const res = await fetch(apiUrl('bike-sharing'));
-  const data = await res.json();
+  const data = await fetchGeoJSON('bike-sharing');
 
   // Enrich: compute availability ratio (bikes / total) so the map
   // can color each station by how stocked it currently is.

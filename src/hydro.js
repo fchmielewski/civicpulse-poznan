@@ -8,6 +8,56 @@ import { apiUrl, getCityConfig } from './cityConfig.js';
 
 const REFRESH_INTERVAL = 5 * 60 * 1000; // 5 min
 
+/**
+ * Parse "YYYY-MM-DD HH:MM:SS" interpreted as Europe/Warsaw local time
+ * (the format IMGW publishes), returning a Date at the corresponding
+ * UTC moment. Determines the +01:00 (CET) vs +02:00 (CEST) offset for
+ * the given calendar date via Intl, so the result is correct year-round
+ * and across DST boundaries.
+ *
+ * Returns null if the input doesn't match the expected shape.
+ */
+function parseWarsawLocal(str) {
+  if (typeof str !== 'string') return null;
+  const m = str.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+  if (!m) return null;
+  const [, Y, M, D, h, mi, s] = m.map(Number);
+  // First guess: pretend the wall-clock is UTC. Then ask Intl what the
+  // offset is for that moment in Europe/Warsaw. Subtract it to obtain the
+  // true UTC equivalent. Iterate once to settle DST edge cases (where the
+  // offset for the guessed-UTC moment differs from the offset for the
+  // true Warsaw moment — happens within a 1-hour window twice a year).
+  let utcMs = Date.UTC(Y, M - 1, D, h, mi, s);
+  for (let i = 0; i < 2; i++) {
+    const offsetMs = warsawOffsetMs(new Date(utcMs));
+    utcMs = Date.UTC(Y, M - 1, D, h, mi, s) - offsetMs;
+  }
+  return new Date(utcMs);
+}
+
+/**
+ * Returns the Europe/Warsaw UTC-offset (in ms) at the given instant.
+ * Reads `shortOffset` from Intl.DateTimeFormat — supported in all
+ * modern evergreen browsers; falls back to +01:00 (CET) on older ones.
+ */
+function warsawOffsetMs(instant) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Europe/Warsaw',
+      timeZoneName: 'shortOffset'
+    }).formatToParts(instant);
+    const tz = parts.find(p => p.type === 'timeZoneName')?.value || 'GMT+1';
+    const m = tz.match(/GMT([+-])(\d{1,2})(?::?(\d{2}))?/);
+    if (!m) return 60 * 60 * 1000;
+    const sign = m[1] === '-' ? -1 : 1;
+    const hours = parseInt(m[2], 10) || 0;
+    const minutes = parseInt(m[3], 10) || 0;
+    return sign * (hours * 60 + minutes) * 60 * 1000;
+  } catch {
+    return 60 * 60 * 1000; // CET fallback
+  }
+}
+
 let map = null;
 let hydroData = null;
 let visible = true;
@@ -55,9 +105,11 @@ export async function initHydro(mapInstance) {
     addHydroLayers();
     setupInteraction();
 
-    // Auto-refresh
+    // Auto-refresh — guard against city-switch race: `map` may have been
+    // nulled by destroy() between the interval firing and the fetch resolving.
     refreshTimer = setInterval(async () => {
       await fetchHydro();
+      if (!map) return;
       updateHydroSource();
     }, REFRESH_INTERVAL);
 
@@ -78,8 +130,18 @@ export async function initHydro(mapInstance) {
 // --- Data ---
 
 async function fetchHydro() {
-  const res = await fetch(apiUrl('hydro'));
-  hydroData = await res.json();
+  // IMGW occasionally 5xxs upstream — refuse to parse non-2xx as data,
+  // and reject error envelopes that lack the expected `stations` shape.
+  // buildGeoJSON() already guards for null but only consistently when
+  // hydroData itself is null, not when it's `{error, message}`.
+  try {
+    const res = await fetch(apiUrl('hydro'));
+    if (!res.ok) { hydroData = null; return; }
+    const data = await res.json();
+    hydroData = (data && Array.isArray(data.stations)) ? data : null;
+  } catch {
+    hydroData = null;
+  }
 }
 
 function buildGeoJSON() {
@@ -229,13 +291,21 @@ function setupInteraction() {
     const warningPct = warning ? (warning / gaugeMax) * 100 : null;
     const levelPct = Math.min(100, (level / gaugeMax) * 100);
 
-    // Time ago
+    // Time ago. IMGW returns "YYYY-MM-DD HH:MM:SS" with no zone suffix —
+    // those are Europe/Warsaw local times. The previous code hard-coded
+    // `+02:00`, which is correct only during CEST (Apr–Oct); under CET
+    // (Nov–Mar) the time-ago readout was off by exactly one hour. Use
+    // `parseWarsawLocal` (defined below) to compute the actual offset for
+    // that moment via Intl, which handles CET/CEST and DST boundaries.
     let timeAgo = '—';
     if (p.waterLevelTime) {
-      const measured = new Date(p.waterLevelTime.replace(' ', 'T') + '+02:00');
-      const mins = Math.round((Date.now() - measured.getTime()) / 60000);
-      if (mins < 60) timeAgo = mins + ' min ago';
-      else timeAgo = Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm ago';
+      const measured = parseWarsawLocal(p.waterLevelTime);
+      if (measured) {
+        const mins = Math.round((Date.now() - measured.getTime()) / 60000);
+        if (mins < 0)        timeAgo = 'just now';
+        else if (mins < 60)  timeAgo = mins + ' min ago';
+        else                 timeAgo = Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm ago';
+      }
     }
 
     const html = `

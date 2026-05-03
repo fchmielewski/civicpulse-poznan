@@ -5,7 +5,7 @@
 
 import maplibregl from 'maplibre-gl';
 import { showNetworkLinks } from './network.js';
-import { apiUrl } from './cityConfig.js';
+import { fetchGeoJSON } from './cityConfig.js';
 
 let map = null;
 let stationsGeoJSON = null;
@@ -36,8 +36,7 @@ export async function initMobile(mapInstance) {
 // --- Data ---
 
 async function fetchStations() {
-  const res = await fetch(apiUrl('base-stations'));
-  stationsGeoJSON = await res.json();
+  stationsGeoJSON = await fetchGeoJSON('base-stations');
 }
 
 // --- Map Layers ---

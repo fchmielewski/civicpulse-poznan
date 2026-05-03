@@ -251,7 +251,16 @@ function shortestBearingDiff(from, to) {
 async function fetchVehicles() {
   try {
     const res = await fetch(apiUrl('vehicles'));
+    if (!res.ok) return; // upstream 5xx — leave existing vehicle markers in place
     const data = await res.json();
+    // Server returns `{error, message}` (no `vehicles` array) when the
+    // upstream GTFS-RT decode fails. Skip cleanly rather than crash.
+    if (!data || !Array.isArray(data.vehicles)) return;
+    // Layer torn down between request dispatch and response (city switch
+    // mid-flight). The `setInterval` was cancelled by destroyTransit, but
+    // an in-flight fetch finishes after the cancel; without this guard
+    // we'd call `marker.addTo(null)` and crash.
+    if (!map) return;
     const now = performance.now();
     const fetchDt = (now - lastFetchTime) / 1000; // seconds since last fetch
     lastFetchTime = now;

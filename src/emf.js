@@ -4,7 +4,7 @@
    ============================================ */
 
 import maplibregl from 'maplibre-gl';
-import { apiUrl } from './cityConfig.js';
+import { fetchGeoJSON } from './cityConfig.js';
 
 let map = null;
 let emfGeoJSON = null;
@@ -33,8 +33,7 @@ export async function initEMF(mapInstance) {
 // --- Data ---
 
 async function fetchEMF() {
-  const res = await fetch(apiUrl('emf-measurements'));
-  const data = await res.json();
+  const data = await fetchGeoJSON('emf-measurements');
 
   // Enrich features
   data.features.forEach(f => {

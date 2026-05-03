@@ -454,12 +454,17 @@ function initMap() {
     bearing: cfg.bearing
   };
 
-  // Hard-cap the rendered DPR. On a 3x retina screen the GPU draws 9× the
-  // pixel count of a 1x screen — for Warsaw at zoom 14.2 that's tens of
-  // millions of fragment-shader invocations every frame. 1.5× keeps the
-  // map crisp without paying the 4-9× cost. Standalone variable so we
-  // can also pass it to setPixelRatio after style swaps if needed.
-  const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+  // Cap the rendered DPR — but never below the display's actual physical
+  // ratio when that ratio is Retina-class (2×) or below. Rendering Retina
+  // at 1.5× and letting the browser upscale produces visible blur on
+  // exactly the screens users notice it on.
+  //
+  // The cap kicks in at 3× (iPhone Pro / some 4K laptops) where the
+  // marginal sharpness from each extra logical pixel is imperceptible on
+  // a map but the fragment-shader cost is 2.25× a 2× display. So:
+  //   DPR ≤ 2 → use the native DPR (Retina is exact, low-DPI is exact)
+  //   DPR > 2 → cap at 2 (still pixel-perfect at Retina density)
+  const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
 
   map = new maplibregl.Map({
     container: 'map',
@@ -695,6 +700,13 @@ function destroyAllLayers() {
     if (!entry.module) continue; // module never finished loading — nothing to tear down
     try { entry.module[entry.destroyFn](); }
     catch (e) { console.error(`[CivicPulse] destroy ${entry.name}:`, e); }
+    // Drop the cached module reference. Each layer module nulls its
+    // internal `map` inside destroy(), so a sidebar click landing in
+    // the brief window between teardown and the next-city re-init
+    // would otherwise call `map.getLayer(...)` on null and crash.
+    // The next `entry.load()` returns the already-cached dynamic-import
+    // promise so this doesn't add any network or parse cost.
+    entry.module = null;
   }
   initializedLayers.clear();
 }

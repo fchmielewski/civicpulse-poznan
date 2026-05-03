@@ -5,7 +5,7 @@
    ============================================ */
 
 import maplibregl from 'maplibre-gl';
-import { apiUrl } from './cityConfig.js';
+import { fetchGeoJSON } from './cityConfig.js';
 
 const REFRESH_INTERVAL = 30 * 60_000; // 30 min
 
@@ -50,6 +50,7 @@ export async function initEnvironment(mapInstance) {
       if (!visible) return;
       try {
         await fetchEnvironment();
+        if (!map) return; // city-switch race
         map.getSource('environment')?.setData(envGeoJSON);
       } catch (e) { /* silent */ }
     }, REFRESH_INTERVAL);
@@ -66,8 +67,7 @@ export async function initEnvironment(mapInstance) {
 // --- Data ---
 
 async function fetchEnvironment() {
-  const res = await fetch(apiUrl('environment'));
-  envGeoJSON = await res.json();
+  envGeoJSON = await fetchGeoJSON('environment');
 }
 
 // --- Map Layers ---
@@ -277,7 +277,15 @@ export function searchFeatures(query) {
     const p = f.properties;
     const hay = [p.name, p.address].filter(Boolean).join(' ').toLowerCase();
     if (!hay.includes(q)) continue;
-    const aq = p.aqIndex && p.aqIndex.category ? ' · AQI ' + p.aqIndex.category : '';
+    // GeoJSON properties round-trip as scalars, so nested objects like
+    // aqIndex come back as JSON strings — parse defensively (same shape
+    // as the popup code at line 176). Without this the AQI category
+    // never made it into search subtitles.
+    let aqObj = null;
+    try {
+      aqObj = typeof p.aqIndex === 'string' ? JSON.parse(p.aqIndex) : (p.aqIndex || null);
+    } catch { /* malformed — drop */ }
+    const aq = aqObj && aqObj.category ? ' · AQI ' + aqObj.category : '';
     out.push({
       label: p.name || 'Air quality station',
       sublabel: 'Environment' + aq,

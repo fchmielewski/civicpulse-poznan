@@ -4,7 +4,7 @@
    ============================================ */
 
 import maplibregl from 'maplibre-gl';
-import { apiUrl } from './cityConfig.js';
+import { fetchGeoJSON, getCityConfig } from './cityConfig.js';
 
 const REFRESH_INTERVAL = 300000; // 5 minutes (data updates ~daily)
 
@@ -24,9 +24,11 @@ export async function initBicycleCounters(mapInstance) {
     addCounterLayers();
     setupInteraction();
 
-    // Periodic refresh
+    // Periodic refresh — `map` may be nulled by destroy() between when the
+    // interval fires and when our await resolves; check before touching it.
     refreshTimer = setInterval(async () => {
       await fetchCounters();
+      if (!map) return;
       if (map.getSource('bicycle-counters')) {
         map.getSource('bicycle-counters').setData(countersGeoJSON);
       }
@@ -43,15 +45,24 @@ export async function initBicycleCounters(mapInstance) {
 
 // --- Data ---
 
+// Escape literal regex metacharacters in a string so it can be embedded
+// inside `new RegExp(...)`. Used for the city-name prefix strip below.
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 async function fetchCounters() {
-  const res = await fetch(apiUrl('bicycle-counters'));
-  const data = await res.json();
+  const data = await fetchGeoJSON('bicycle-counters');
 
   // Enrich features with computed properties
+  // Build a regex that strips the *current city's* name prefix so "Łódź - X"
+  // becomes "X" when this layer is enabled there in future. Was hardcoded
+  // to "Poznań" which silently no-ops for any other city.
+  const cityName = getCityConfig()?.name || '';
+  const cityPrefix = cityName ? new RegExp(`^${escapeRegex(cityName)}\\s*-\\s*`, 'i') : null;
   data.features.forEach(f => {
     const p = f.properties;
-    // Clean name: remove "Poznań - " prefix
-    p.displayName = (p.name || '').replace(/^Poznań\s*-\s*/, '');
+    p.displayName = cityPrefix ? (p.name || '').replace(cityPrefix, '') : (p.name || '');
     // Parse numbers
     p.today = parseInt(p.stats_last_day) || 0;
     p.avgDay = parseInt(p.stats_avg_day) || 0;

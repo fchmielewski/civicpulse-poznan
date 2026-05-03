@@ -4,7 +4,7 @@
    ============================================ */
 
 import maplibregl from 'maplibre-gl';
-import { apiUrl } from './cityConfig.js';
+import { fetchGeoJSON } from './cityConfig.js';
 
 let map = null;
 let cctvGeoJSON = null;
@@ -57,8 +57,7 @@ export async function initCCTV(mapInstance) {
 // --- Data ---
 
 async function fetchCCTV() {
-  const res = await fetch(apiUrl('cctv'));
-  cctvGeoJSON = await res.json();
+  cctvGeoJSON = await fetchGeoJSON('cctv');
 }
 
 // --- Map Layers ---

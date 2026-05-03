@@ -4,7 +4,7 @@
    ============================================ */
 
 import maplibregl from 'maplibre-gl';
-import { apiUrl } from './cityConfig.js';
+import { fetchGeoJSON } from './cityConfig.js';
 
 let map = null;
 let trafficGeoJSON = null;
@@ -43,8 +43,7 @@ export async function initTrafficLights(mapInstance) {
 // --- Data ---
 
 async function fetchTrafficLights() {
-  const res = await fetch(apiUrl('traffic-lights'));
-  trafficGeoJSON = await res.json();
+  trafficGeoJSON = await fetchGeoJSON('traffic-lights');
 }
 
 // --- Map Layers ---
