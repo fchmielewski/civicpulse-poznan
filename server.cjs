@@ -490,14 +490,7 @@ const isLiteMode = process.env.RENDER || process.env.LITE_MODE;
 for (const city of Object.keys(CITIES)) {
   if (!CITIES[city].gtfs || !CITIES[city].gtfs.staticUrl) continue;
   
-  // Free tier cloud hosts (e.g., Render) have 512MB RAM limits. Warsaw's GTFS 
-  // is ~600MB unzipped and over 300,000 trips, which causes an immediate OOM crash.
-  if (isLiteMode && city === 'warszawa') {
-    console.log(`[GTFS:${city}] Skipping static data load completely to conserve memory (LITE_MODE active). Real-time positions will still work.`);
-    cityData[city] = { routes: [], routesMap: {}, stops: [], stopsMap: {}, tripsMap: {}, tripStopTimes: {}, routeFrequency: {}, routeGeoJSON: { type: 'FeatureCollection', features: [] } };
-    continue;
-  }
-  
+  // We no longer skip Warsaw! The memory optimizations allow us to load all cities!
   refreshGTFSIfNeeded(city);
   cityData[city] = loadCityGTFS(city);
 }
