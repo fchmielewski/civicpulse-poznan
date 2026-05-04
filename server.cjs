@@ -219,7 +219,7 @@ function readCSV(filepath) {
 // GTFS spec stop_times.txt has no quoted fields (values are integers or trip-id
 // strings without commas), so a plain split(',') is safe per spec.
 function streamCSV(filepath, perRow) {
-  const CHUNK_BYTES = 64 * 1024 * 1024;
+  const CHUNK_BYTES = 1 * 1024 * 1024;
   const fd = fs.openSync(filepath, 'r');
   const buf = Buffer.allocUnsafe(CHUNK_BYTES);
   const decoder = new StringDecoder('utf-8');
