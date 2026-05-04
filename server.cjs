@@ -192,7 +192,7 @@ function refreshGTFSIfNeeded(city) {
       }
 
       fs.readdirSync(dir).forEach(f => {
-        if (f.endsWith('.txt')) fs.unlinkSync(path.join(dir, f));
+        if (f.endsWith('.txt') || f.endsWith('.bin') || f.endsWith('.json')) fs.unlinkSync(path.join(dir, f));
       });
       execSync(`unzip -o "${tmpZip}" -d "${dir}"`, { timeout: 60000 });
       fs.unlinkSync(tmpZip);
@@ -424,54 +424,53 @@ function loadCityGTFS(city) {
 
   // Per-trip stop sequences (used by the vehicle popup to show first/last stop
   // and the next-stop arrival time). 
-  const tripStopTimes = {};
-  
-  // We encode stop_times into highly compact strings to save hundreds of MBs
-  // of RAM vs creating millions of JS objects. This allows full stop data
-  // for secondary cities to fit comfortably within free tier limits.
+  // We encode stop_times into a raw binary file on disk and maintain a tiny RAM
+  // index of byte offsets. This reduces the memory footprint for all cities 
+  // (including Warsaw) to virtually zero, allowing full features on the free tier.
+  let tripOffsets = {};
+  let stopTimesFd = null;
   const stopTimesPath = path.join(dir, 'stop_times.txt');
+  const stopTimesBinPath = path.join(dir, 'stop_times.bin');
+  const stopTimesIndexPath = path.join(dir, 'stop_times_index.json');
   
-  // Warsaw's stop_times.txt contains millions of rows and over 315,000 trips.
-  // Even with string optimizations, the sheer volume of strings causes memory
-  // to breach the 460MB Node.js limit on Render. We skip it to keep the app alive.
-  const skipStopTimes = (process.env.RENDER || process.env.LITE_MODE) && city === 'warszawa';
-  
-  if (!skipStopTimes && fs.existsSync(stopTimesPath)) {
-    let currentTripId = null;
-    let currentArr = [];
-    
-    streamCSV(stopTimesPath, (f, c) => {
-      const tripId = (f[c.trip_id] || '').replace(/"/g, '');
-      if (tripId !== currentTripId) {
+  if (fs.existsSync(stopTimesPath)) {
+    if (!fs.existsSync(stopTimesBinPath) || !fs.existsSync(stopTimesIndexPath)) {
+      console.log(`[GTFS:${city}] Building zero-memory binary index for stop_times...`);
+      const outFd = fs.openSync(stopTimesBinPath, 'w');
+      let currentOffset = 0;
+      let currentTripId = null;
+      let currentArr = [];
+      
+      const flush = () => {
         if (currentTripId !== null) {
-          if (tripStopTimes[currentTripId]) {
-            tripStopTimes[currentTripId] += ',' + currentArr.join(',');
-          } else {
-            tripStopTimes[currentTripId] = currentArr.join(',');
-          }
+          currentArr.sort((a, b) => parseInt(a.split('|')[0]) - parseInt(b.split('|')[0]));
+          const str = currentArr.join(',');
+          const buf = Buffer.from(str, 'utf-8');
+          fs.writeSync(outFd, buf, 0, buf.length, currentOffset);
+          tripOffsets[currentTripId] = [currentOffset, buf.length];
+          currentOffset += buf.length;
         }
-        currentTripId = tripId;
-        currentArr = [];
-      }
-      currentArr.push(`${f[c.stop_sequence]}|${f[c.stop_id]}|${f[c.arrival_time]}`);
-    });
-    
-    if (currentTripId !== null) {
-      if (tripStopTimes[currentTripId]) tripStopTimes[currentTripId] += ',' + currentArr.join(',');
-      else tripStopTimes[currentTripId] = currentArr.join(',');
+      };
+
+      streamCSV(stopTimesPath, (f, c) => {
+        const tripId = (f[c.trip_id] || '').replace(/"/g, '');
+        if (tripId !== currentTripId) {
+          flush();
+          currentTripId = tripId;
+          currentArr = [];
+        }
+        currentArr.push(`${f[c.stop_sequence]}|${f[c.stop_id]}|${f[c.arrival_time]}`);
+      });
+      
+      flush();
+      fs.closeSync(outFd);
+      fs.writeFileSync(stopTimesIndexPath, JSON.stringify(tripOffsets));
+    } else {
+      console.log(`[GTFS:${city}] Loading stop_times binary index...`);
+      tripOffsets = JSON.parse(fs.readFileSync(stopTimesIndexPath, 'utf-8'));
     }
     
-    // Sort each trip's stops by sequence just in case the CSV wasn't strictly ordered
-    Object.keys(tripStopTimes).forEach(tripId => {
-      const str = tripStopTimes[tripId];
-      if (str.includes(',')) {
-        const parts = str.split(',');
-        parts.sort((a, b) => parseInt(a) - parseInt(b));
-        tripStopTimes[tripId] = parts.join(',');
-      }
-    });
-  } else if (skipStopTimes) {
-    console.log(`[GTFS:${city}] Skipping stop_times.txt to conserve memory (LITE_MODE). From/To data will be blank.`);
+    stopTimesFd = fs.openSync(stopTimesBinPath, 'r');
   }
 
   // Frequency = trips per hour per direction.
@@ -488,7 +487,7 @@ function loadCityGTFS(city) {
     routeFrequency[routeId] = Math.round(perHour * 10) / 10;
   });
 
-  return { routes, routesMap, stops, stopsMap, tripsMap, tripStopTimes, routeFrequency, routeGeoJSON };
+  return { routes, routesMap, stops, stopsMap, tripsMap, tripOffsets, stopTimesFd, routeFrequency, routeGeoJSON };
 }
 
 // Load GTFS for all cities with a staticUrl configured
@@ -579,8 +578,12 @@ app.get('/api/vehicles', async (req, res) => {
       const route = routeId ? d.routesMap[routeId] : null;
 
       let fromStop = null, toStop = null, nextStopArrival = null, nextStopName = null;
-      if (tripId && d.tripStopTimes[tripId]) {
-        const stSeqStr = d.tripStopTimes[tripId];
+      if (tripId && d.tripOffsets && d.tripOffsets[tripId] && d.stopTimesFd !== null) {
+        const [offset, length] = d.tripOffsets[tripId];
+        const buf = Buffer.allocUnsafe(length);
+        fs.readSync(d.stopTimesFd, buf, 0, length, offset);
+        const stSeqStr = buf.toString('utf-8');
+        
         if (stSeqStr) {
           const parts = stSeqStr.split(',');
           if (parts.length > 0) {
