@@ -411,17 +411,38 @@ function loadCityGTFS(city) {
   // for secondary cities to fit comfortably within free tier limits.
   const stopTimesPath = path.join(dir, 'stop_times.txt');
   if (fs.existsSync(stopTimesPath)) {
+    let currentTripId = null;
+    let currentArr = [];
+    
     streamCSV(stopTimesPath, (f, c) => {
       const tripId = (f[c.trip_id] || '').replace(/"/g, '');
-      if (!tripStopTimes[tripId]) tripStopTimes[tripId] = [];
-      tripStopTimes[tripId].push(`${f[c.stop_sequence]}|${f[c.stop_id]}|${f[c.arrival_time]}`);
+      if (tripId !== currentTripId) {
+        if (currentTripId !== null) {
+          if (tripStopTimes[currentTripId]) {
+            tripStopTimes[currentTripId] += ',' + currentArr.join(',');
+          } else {
+            tripStopTimes[currentTripId] = currentArr.join(',');
+          }
+        }
+        currentTripId = tripId;
+        currentArr = [];
+      }
+      currentArr.push(`${f[c.stop_sequence]}|${f[c.stop_id]}|${f[c.arrival_time]}`);
     });
     
-    // Sort each trip's stops by sequence and join into a single memory-efficient string
+    if (currentTripId !== null) {
+      if (tripStopTimes[currentTripId]) tripStopTimes[currentTripId] += ',' + currentArr.join(',');
+      else tripStopTimes[currentTripId] = currentArr.join(',');
+    }
+    
+    // Sort each trip's stops by sequence just in case the CSV wasn't strictly ordered
     Object.keys(tripStopTimes).forEach(tripId => {
-      const arr = tripStopTimes[tripId];
-      arr.sort((a, b) => parseInt(a) - parseInt(b));
-      tripStopTimes[tripId] = arr.join(',');
+      const str = tripStopTimes[tripId];
+      if (str.includes(',')) {
+        const parts = str.split(',');
+        parts.sort((a, b) => parseInt(a) - parseInt(b));
+        tripStopTimes[tripId] = parts.join(',');
+      }
     });
   }
 
