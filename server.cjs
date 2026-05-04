@@ -338,25 +338,45 @@ function loadCityGTFS(city) {
 
   const tripsMap = {};
   const routeTripCounts = {};
+  // Per-route set of distinct service_id values. GTFS feeds bundle multiple
+  // calendar patterns (weekday, Saturday, Sunday, holiday, school holiday,
+  // …) and each one repeats every trip — so the raw `count` reflects all
+  // patterns combined, not one day's runs. Dividing by the route's pattern
+  // count later gives us a per-day count. Łódź has 15 patterns per route,
+  // Poznań 3, Warsaw varies — without this the frequency was over-stated
+  // by 3-15× for those cities.
+  const routeServicePatterns = {};
   const routeShapes = {};
   const activeShapeIds = new Set();
-  
+
   const tripsPath = path.join(dir, 'trips.txt');
   if (fs.existsSync(tripsPath)) {
     streamCSV(tripsPath, (f, c) => {
       const tripId = (f[c.trip_id] || '').replace(/"/g, '');
-      const routeId = f[c.route_id];
+      // Łódź's GTFS quotes its route_id values (`"1"`, `"54B"`) per
+      // RFC 4180. Our streamCSV is a cheap split-on-comma reader and
+      // doesn't unwrap quoted fields, so we strip them here — same
+      // pattern as `tripId` above and `trip_headsign` below. Without
+      // this, `routeTripCounts['"54B"']` gets populated but the
+      // GTFS-RT feed sends bare `54B`, and every Łódź lookup
+      // (frequency, route shape, color) silently misses.
+      const routeId = (f[c.route_id] || '').replace(/"/g, '');
+      const serviceId = (f[c.service_id] || '').replace(/"/g, '');
       const dirId = parseInt(f[c.direction_id]);
       const shapeId = f[c.shape_id];
-      
+
       tripsMap[tripId] = {
         routeId,
         headsign: (f[c.trip_headsign] || '').replace(/"/g, ''),
         directionId: dirId,
         shapeId
       };
-      
+
       routeTripCounts[routeId] = (routeTripCounts[routeId] || 0) + 1;
+      if (serviceId) {
+        if (!routeServicePatterns[routeId]) routeServicePatterns[routeId] = new Set();
+        routeServicePatterns[routeId].add(serviceId);
+      }
       
       if (shapeId) {
         const key = `${routeId}_${dirId}`;
@@ -446,9 +466,18 @@ function loadCityGTFS(city) {
     });
   }
 
+  // Frequency = trips per hour per direction.
+  //   patterns = number of service-day patterns this route has trips for
+  //              (e.g. Mon-Fri vs Sat vs Sun → 3); fallback 1 so we never
+  //              divide by zero.
+  //   /patterns → from "all-pattern total" to "one-day total"
+  //   /2        → assume the two directions are roughly balanced
+  //   /18       → spread over an 18-hour service window
   const routeFrequency = {};
   Object.entries(routeTripCounts).forEach(([routeId, count]) => {
-    routeFrequency[routeId] = Math.round(count / 2 / 18 * 10) / 10;
+    const patterns = routeServicePatterns[routeId]?.size || 1;
+    const perHour = count / patterns / 2 / 18;
+    routeFrequency[routeId] = Math.round(perHour * 10) / 10;
   });
 
   return { routes, routesMap, stops, stopsMap, tripsMap, tripStopTimes, routeFrequency, routeGeoJSON };
