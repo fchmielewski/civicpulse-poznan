@@ -336,39 +336,55 @@ function loadCityGTFS(city) {
   });
   console.log(`[GTFS:${city}] ${stops.length} stops`);
 
-  const rawTrips = read('trips.txt');
   const tripsMap = {};
-  rawTrips.forEach(t => {
-    tripsMap[(t.trip_id || '').replace(/"/g, '')] = {
-      routeId: t.route_id,
-      headsign: (t.trip_headsign || '').replace(/"/g, ''),
-      directionId: parseInt(t.direction_id),
-      shapeId: t.shape_id
-    };
-  });
+  const routeTripCounts = {};
+  const routeShapes = {};
+  const activeShapeIds = new Set();
+  
+  const tripsPath = path.join(dir, 'trips.txt');
+  if (fs.existsSync(tripsPath)) {
+    streamCSV(tripsPath, (f, c) => {
+      const tripId = (f[c.trip_id] || '').replace(/"/g, '');
+      const routeId = f[c.route_id];
+      const dirId = parseInt(f[c.direction_id]);
+      const shapeId = f[c.shape_id];
+      
+      tripsMap[tripId] = {
+        routeId,
+        headsign: (f[c.trip_headsign] || '').replace(/"/g, ''),
+        directionId: dirId,
+        shapeId
+      };
+      
+      routeTripCounts[routeId] = (routeTripCounts[routeId] || 0) + 1;
+      
+      if (shapeId) {
+        const key = `${routeId}_${dirId}`;
+        if (!routeShapes[key]) {
+          routeShapes[key] = { routeId, directionId: dirId, shapeId };
+          activeShapeIds.add(shapeId);
+        }
+      }
+    });
+  }
   console.log(`[GTFS:${city}] ${Object.keys(tripsMap).length} trips`);
 
   const shapesById = {};
-  const rawShapes = fs.existsSync(path.join(dir, 'shapes.txt')) ? read('shapes.txt') : [];
-  rawShapes.forEach(s => {
-    const id = s.shape_id;
-    if (!shapesById[id]) shapesById[id] = [];
-    shapesById[id].push({
-      lat: parseFloat(s.shape_pt_lat),
-      lng: parseFloat(s.shape_pt_lon),
-      seq: parseInt(s.shape_pt_sequence)
+  const shapesPath = path.join(dir, 'shapes.txt');
+  if (fs.existsSync(shapesPath)) {
+    streamCSV(shapesPath, (f, c) => {
+      const id = f[c.shape_id];
+      if (!activeShapeIds.has(id)) return; // Massive memory savings: discard unused shapes on the fly
+      
+      if (!shapesById[id]) shapesById[id] = [];
+      shapesById[id].push({
+        lat: parseFloat(f[c.shape_pt_lat]),
+        lng: parseFloat(f[c.shape_pt_lon]),
+        seq: parseInt(f[c.shape_pt_sequence])
+      });
     });
-  });
-  Object.values(shapesById).forEach(pts => pts.sort((a, b) => a.seq - b.seq));
-
-  const routeShapes = {};
-  rawTrips.forEach(t => {
-    const shapeId = t.shape_id;
-    const dir = parseInt(t.direction_id);
-    if (!shapeId || !shapesById[shapeId]) return;
-    const key = `${t.route_id}_${dir}`;
-    if (!routeShapes[key]) routeShapes[key] = { routeId: t.route_id, directionId: dir, shapeId };
-  });
+    Object.values(shapesById).forEach(pts => pts.sort((a, b) => a.seq - b.seq));
+  }
 
   const routeGeoJSON = { type: 'FeatureCollection', features: [] };
   const addedShapes = new Set();
@@ -409,8 +425,6 @@ function loadCityGTFS(city) {
     });
   }
 
-  const routeTripCounts = {};
-  rawTrips.forEach(t => { routeTripCounts[t.route_id] = (routeTripCounts[t.route_id] || 0) + 1; });
   const routeFrequency = {};
   Object.entries(routeTripCounts).forEach(([routeId, count]) => {
     routeFrequency[routeId] = Math.round(count / 2 / 18 * 10) / 10;
