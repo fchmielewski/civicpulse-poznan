@@ -365,9 +365,12 @@ function loadCityGTFS(city) {
       const dirId = parseInt(f[c.direction_id]);
       const shapeId = f[c.shape_id];
 
-      // Memory optimization: store only routeId as a string instead of an object.
-      // This saves ~45MB of RAM for Warsaw's 315,000 trips.
-      tripsMap[tripId] = routeId;
+      // Memory optimization: pack the two fields the vehicle endpoint
+      // needs into a single delimited string instead of allocating an
+      // object per trip. For Warsaw (315k trips) this is ~10 MB vs
+      // ~50 MB for the object form. Decoded with a simple split below.
+      const headsign = (f[c.trip_headsign] || '').replace(/"/g, '');
+      tripsMap[tripId] = headsign ? `${routeId}|${headsign}` : routeId;
 
       routeTripCounts[routeId] = (routeTripCounts[routeId] || 0) + 1;
       if (serviceId) {
@@ -557,8 +560,22 @@ app.get('/api/vehicles', async (req, res) => {
       if (!vp || !vp.position) return null;
 
       const tripId = vp.trip?.tripId;
-      const tripRouteId = tripId ? d.tripsMap[tripId] : null;
-      const routeId = vp.trip?.routeId || tripRouteId;
+      // tripsMap[tripId] is a packed "routeId|headsign" string (or just
+      // "routeId" if no headsign was present). A prior refactor packed
+      // it for memory but the consumer kept reading `tripInfo?.headsign`
+      // → ReferenceError → every fetch returned `vehicles: []`.
+      const packed = tripId ? d.tripsMap[tripId] : null;
+      let staticRouteId = null, staticHeadsign = null;
+      if (typeof packed === 'string') {
+        const sep = packed.indexOf('|');
+        if (sep < 0) {
+          staticRouteId = packed;
+        } else {
+          staticRouteId = packed.slice(0, sep);
+          staticHeadsign = packed.slice(sep + 1);
+        }
+      }
+      const routeId = vp.trip?.routeId || staticRouteId;
       const route = routeId ? d.routesMap[routeId] : null;
 
       let fromStop = null, toStop = null, nextStopArrival = null, nextStopName = null;
@@ -599,7 +616,7 @@ app.get('/api/vehicles', async (req, res) => {
         routeShortName: route?.shortName || routeId,
         routeType: route?.type,
         routeColor: route?.color || '#00AAFF',
-        headsign: tripInfo?.headsign || vp.trip?.routeId,
+        headsign: staticHeadsign || vp.trip?.routeId || routeId || '',
         currentStopSequence: vp.currentStopSequence,
         currentStatus: vp.currentStatus,
         timestamp: vp.timestamp ? parseInt(vp.timestamp) : null,
