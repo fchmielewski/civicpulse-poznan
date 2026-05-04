@@ -365,12 +365,9 @@ function loadCityGTFS(city) {
       const dirId = parseInt(f[c.direction_id]);
       const shapeId = f[c.shape_id];
 
-      tripsMap[tripId] = {
-        routeId,
-        headsign: (f[c.trip_headsign] || '').replace(/"/g, ''),
-        directionId: dirId,
-        shapeId
-      };
+      // Memory optimization: store only routeId as a string instead of an object.
+      // This saves ~45MB of RAM for Warsaw's 315,000 trips.
+      tripsMap[tripId] = routeId;
 
       routeTripCounts[routeId] = (routeTripCounts[routeId] || 0) + 1;
       if (serviceId) {
@@ -430,7 +427,13 @@ function loadCityGTFS(city) {
   // of RAM vs creating millions of JS objects. This allows full stop data
   // for secondary cities to fit comfortably within free tier limits.
   const stopTimesPath = path.join(dir, 'stop_times.txt');
-  if (fs.existsSync(stopTimesPath)) {
+  
+  // Warsaw's stop_times.txt contains millions of rows and over 315,000 trips.
+  // Even with string optimizations, the sheer volume of strings causes memory
+  // to breach the 460MB Node.js limit on Render. We skip it to keep the app alive.
+  const skipStopTimes = (process.env.RENDER || process.env.LITE_MODE) && city === 'warszawa';
+  
+  if (!skipStopTimes && fs.existsSync(stopTimesPath)) {
     let currentTripId = null;
     let currentArr = [];
     
@@ -464,6 +467,8 @@ function loadCityGTFS(city) {
         tripStopTimes[tripId] = parts.join(',');
       }
     });
+  } else if (skipStopTimes) {
+    console.log(`[GTFS:${city}] Skipping stop_times.txt to conserve memory (LITE_MODE). From/To data will be blank.`);
   }
 
   // Frequency = trips per hour per direction.
@@ -552,8 +557,8 @@ app.get('/api/vehicles', async (req, res) => {
       if (!vp || !vp.position) return null;
 
       const tripId = vp.trip?.tripId;
-      const tripInfo = tripId ? d.tripsMap[tripId] : null;
-      const routeId = vp.trip?.routeId || tripInfo?.routeId;
+      const tripRouteId = tripId ? d.tripsMap[tripId] : null;
+      const routeId = vp.trip?.routeId || tripRouteId;
       const route = routeId ? d.routesMap[routeId] : null;
 
       let fromStop = null, toStop = null, nextStopArrival = null, nextStopName = null;
@@ -625,11 +630,11 @@ app.get('/api/trip-updates', async (req, res) => {
       const tu = entity.tripUpdate;
       if (!tu) return null;
       const tripId = tu.trip?.tripId;
-      const tripInfo = tripId ? d.tripsMap[tripId] : null;
+      const tripRouteId = tripId ? d.tripsMap[tripId] : null;
       return {
         id: entity.id,
         tripId,
-        routeId: tu.trip?.routeId || tripInfo?.routeId,
+        routeId: tu.trip?.routeId || tripRouteId,
         delay: tu.delay,
         stopTimeUpdates: (tu.stopTimeUpdate || []).map(stu => ({
           stopId: stu.stopId,
