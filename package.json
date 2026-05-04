@@ -7,8 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "server": "node --max-old-space-size=4096 server.cjs",
-    "start": "node --max-old-space-size=4096 server.cjs"
+    "server": "node --max-old-space-size=400 server.cjs",
+    "start": "node --max-old-space-size=400 server.cjs"
   },
   "dependencies": {
     "cors": "^2.8.6",
